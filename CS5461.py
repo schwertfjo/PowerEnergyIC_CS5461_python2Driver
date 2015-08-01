@@ -1,0 +1,144 @@
+﻿#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import RPi.GPIO as GPIO
+import spidev
+import time
+
+class cs5461:
+
+    # define command bytes
+    sync0 = 254
+    sync1 = 255
+    reset = 128
+    compu = 232
+
+    # default settings
+    default_mode = 2
+    default_speed = 100000
+    default_inverted = True # due to optocouplers
+
+    def __init__(self, mode = default_mode, speed = default_speed, inverted = default_inverted):
+        self.spi = spidev.SpiDev()
+        self.spi.open(0,0)
+        self.spi.mode = mode
+        self.spi.max_speed_hz = speed
+        self.inverted = inverted
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(25, GPIO.OUT)
+        self.Init()
+
+    def Reset(self):
+        if self.inverted:
+    	    self.spi.writebytes([self.reset ^ 255] + [self.sync1 ^ 255]*3)
+    	    time.sleep(0.1)
+        else:
+    	    self.writebytes([self.reset] + [self.sync1]*3)
+    	    time.sleep(0.1)
+
+    def Sync(self):
+        if self.inverted:
+    	    self.spi.writebytes([self.sync1 ^ 255]*3 + [self.sync0 ^ 255])
+    	    time.sleep(0.1)
+        else:
+    	    self.spi.writebytes([self.sync1]*3 + [self.sync0])
+    	    time.sleep(0.1)
+
+    def Init(self):
+        # chip reset cycle via gpio25
+        GPIO.output(25, True)
+        time.sleep(1)
+        GPIO.output(25, False)
+        time.sleep(1)
+        self.Sync()
+        self.Reset()
+        self.Sync()
+        wrReg00 = 0x40 # Config
+        wrReg01 = 0x42 # Current Offset
+        wrReg02 = 0x44 # Current Gain
+        wrReg03 = 0x46 # Voltage Offset
+        wrReg04 = 0x48 # Voltage Gain
+        wrReg13 = 0x5A # Timebase Calibration
+        wrReg14 = 0x5C # Power Offset Calibration
+        wrReg16 = 0x60 # Current Channel AC Offset
+        wrReg17 = 0x62 # Voltage Channel AC Offset
+        if self.inverted:
+            # good working calibration data for energenie power meter lan (determined by trial)
+            self.spi.writebytes([wrReg00 ^ 255, 0b1  ^ 255, 0b0  ^ 255, 0b1  ^ 255])
+            self.spi.writebytes([wrReg01 ^ 255, 0xFF ^ 255, 0xB5 ^ 255, 0x62 ^ 255])
+            self.spi.writebytes([wrReg02 ^ 255, 0x54 ^ 255, 0xFE ^ 255, 0xFF ^ 255])
+            self.spi.writebytes([wrReg03 ^ 255, 0x15 ^ 255, 0x8C ^ 255, 0x71 ^ 255])
+            self.spi.writebytes([wrReg04 ^ 255, 0x3D ^ 255, 0xE0 ^ 255, 0xEF ^ 255])
+            self.spi.writebytes([wrReg13 ^ 255, 0x83 ^ 255, 0x12 ^ 255, 0x6E ^ 255])
+            self.spi.writebytes([wrReg14 ^ 255, 0xFF ^ 255, 0xCF ^ 255, 0xC3 ^ 255])
+            self.spi.writebytes([wrReg16 ^ 255, 0x00 ^ 255, 0x01 ^ 255, 0x4A ^ 255])
+            self.spi.writebytes([wrReg17 ^ 255, 0x00 ^ 255, 0x44 ^ 255, 0xCA ^ 255])
+            # Perform continuous computation cycles
+    	    self.spi.writebytes([self.compu ^ 255] + [self.sync1 ^ 255]*3)
+    	    time.sleep(2) # wait until values becomes good
+        else:
+            # good working calibration data for energenie power meter lan (determined by trial)
+            self.spi.writebytes([wrReg00, 0b1, 0b0, 0b1])
+            self.spi.writebytes([wrReg01, 0xFF, 0xB5, 0x62])
+            self.spi.writebytes([wrReg02, 0x54, 0xFE, 0xFF])
+            self.spi.writebytes([wrReg03, 0x15, 0x8C, 0x71])
+            self.spi.writebytes([wrReg04, 0x3D, 0xE0, 0xEF])
+            self.spi.writebytes([wrReg13, 0x83, 0x12, 0x6E])
+            self.spi.writebytes([wrReg14, 0xFF, 0xCF, 0xC3])
+            self.spi.writebytes([wrReg16, 0x00, 0x01, 0x4A])
+            self.spi.writebytes([wrReg17, 0x00, 0x44, 0xCA])
+            # start continuous computation cycles
+            self.spi.writebytes([self.compu] + [self.sync1]*3)
+            time.sleep(1)
+
+    def readregister(self, register):
+        if register > 31 or register < 0: #just check range
+    	    return -1
+        self.Sync()
+        if self.inverted:
+    	    ret = self.spi.xfer2([(register << 1) ^ 255] + [self.sync0 ^ 255]*3)
+    	    inv = []
+    	    for value in ret:
+        	inv.append(value ^ 255)
+    	    return inv[1]*256*256 + inv[2]*256 + inv[3]
+        else:
+    	    ret = self.spi.xfer2([register << 1] + [self.sync0]*3)
+    	    return ret[1]*256*256 + ret[2]*256 + ret[3]
+
+    def getregister(self, register):
+        Expotential=[  0, -23, -22, -23, -22, -0, -5, -23, -23, -23, # 0:9
+                     -23, -24, -24, -23, -23, 0, -24, -24, -5, -16,  # 10:19
+                    0, 0, -22, -23, 0, 0, 0, 0, 0, 0, 0, 0 ]	     # 20:31
+        Binary = [0, 15, 26, 28]				     # binary registers
+        twosComplement =  [1, 7, 8, 9, 10, 14, 19, 23]		     # two's complement registers
+
+        if register > 31 or register < 0: # just check range
+    	    return -1
+        value = self.readregister(register)
+        if register in Binary:
+            return  bin(value)
+        elif register in twosComplement:  # convert to host two's complement
+            if value > 2**23:
+                value = ((value ^ 0xFFFFFF) + 1) * -1
+        return value * 2**Expotential[register]
+
+def main():
+    Ugain = 400
+    Igain = 10
+    Egain = 4000
+    device  = cs5461()
+#    for i in range(0,32):
+#	print i, device.getregister(i)
+    while True:
+        Irms = device.getregister(11)
+        Urms = device.getregister(12)
+        Erms = device.getregister(10)
+        I = round(Irms*Igain, 3)
+        U = round(Urms*Ugain, 1)
+        E = round(Erms*Egain, 1)
+        print( "voltage = %.1fV   current = %.3fA   power = %.1fW" % (U, I, E) )
+        time.sleep(1)
+
+if __name__ == '__main__':
+    main()
