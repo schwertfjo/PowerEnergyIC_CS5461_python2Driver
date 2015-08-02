@@ -39,7 +39,7 @@ class cs5461:
             r = self.spi.xfer2( map(lambda x: x ^ 0xFF, send_bytes) )
             return map(lambda x: x ^ 0xFF, r)
         else:
-            r = self.xfer2( send_bytes )
+            r = self.spi.xfer2( send_bytes )
             return r
 
     def close(self):
