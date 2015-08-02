@@ -29,21 +29,27 @@ class cs5461:
         GPIO.setup(25, GPIO.OUT)
         self.Init()
 
-    def Reset(self):
+    def rw(self, bytes):
+        send_bytes = []
+	if type(bytes) is int:
+            send_bytes = [bytes] + [self.sync0] * 3
+        elif type(bytes) is list:
+            send_bytes = bytes + [self.sync0] * (4 - len(bytes))
         if self.inverted:
-    	    self.spi.writebytes([self.reset ^ 255] + [self.sync1 ^ 255]*3)
-    	    time.sleep(0.1)
+            r = self.spi.xfer2( map(lambda x: x ^ 0xFF, send_bytes) )
+            return map(lambda x: x ^ 0xFF, r)
         else:
-    	    self.writebytes([self.reset] + [self.sync1]*3)
-    	    time.sleep(0.1)
+            r = self.xfer2( send_bytes )
+            return r
+
+    def close(self):
+        self.spi.close()
+
+    def Reset(self):
+        self.rw(self.reset)
 
     def Sync(self):
-        if self.inverted:
-    	    self.spi.writebytes([self.sync1 ^ 255]*3 + [self.sync0 ^ 255])
-    	    time.sleep(0.1)
-        else:
-    	    self.spi.writebytes([self.sync1]*3 + [self.sync0])
-    	    time.sleep(0.1)
+    	self.rw([self.sync1]*3 + [self.sync0])
 
     def Init(self):
         # chip reset cycle via gpio25
@@ -63,64 +69,42 @@ class cs5461:
         wrReg14 = 0x5C # Power Offset Calibration
         wrReg16 = 0x60 # Current Channel AC Offset
         wrReg17 = 0x62 # Voltage Channel AC Offset
-        if self.inverted:
-            # good working calibration data for energenie power meter lan (determined by trial)
-            self.spi.writebytes([wrReg00 ^ 255, 0b1  ^ 255, 0b0  ^ 255, 0b1  ^ 255])
-            self.spi.writebytes([wrReg01 ^ 255, 0xFF ^ 255, 0xB5 ^ 255, 0x62 ^ 255])
-            self.spi.writebytes([wrReg02 ^ 255, 0x54 ^ 255, 0xFE ^ 255, 0xFF ^ 255])
-            self.spi.writebytes([wrReg03 ^ 255, 0x15 ^ 255, 0x8C ^ 255, 0x71 ^ 255])
-            self.spi.writebytes([wrReg04 ^ 255, 0x3D ^ 255, 0xE0 ^ 255, 0xEF ^ 255])
-            self.spi.writebytes([wrReg13 ^ 255, 0x83 ^ 255, 0x12 ^ 255, 0x6E ^ 255])
-            self.spi.writebytes([wrReg14 ^ 255, 0xFF ^ 255, 0xCF ^ 255, 0xC3 ^ 255])
-            self.spi.writebytes([wrReg16 ^ 255, 0x00 ^ 255, 0x01 ^ 255, 0x4A ^ 255])
-            self.spi.writebytes([wrReg17 ^ 255, 0x00 ^ 255, 0x44 ^ 255, 0xCA ^ 255])
-            # Perform continuous computation cycles
-    	    self.spi.writebytes([self.compu ^ 255] + [self.sync1 ^ 255]*3)
-    	    time.sleep(2) # wait until values becomes good
-        else:
-            # good working calibration data for energenie power meter lan (determined by trial)
-            self.spi.writebytes([wrReg00, 0b1, 0b0, 0b1])
-            self.spi.writebytes([wrReg01, 0xFF, 0xB5, 0x62])
-            self.spi.writebytes([wrReg02, 0x54, 0xFE, 0xFF])
-            self.spi.writebytes([wrReg03, 0x15, 0x8C, 0x71])
-            self.spi.writebytes([wrReg04, 0x3D, 0xE0, 0xEF])
-            self.spi.writebytes([wrReg13, 0x83, 0x12, 0x6E])
-            self.spi.writebytes([wrReg14, 0xFF, 0xCF, 0xC3])
-            self.spi.writebytes([wrReg16, 0x00, 0x01, 0x4A])
-            self.spi.writebytes([wrReg17, 0x00, 0x44, 0xCA])
-            # start continuous computation cycles
-            self.spi.writebytes([self.compu] + [self.sync1]*3)
-            time.sleep(1)
+        # good working calibration data for energenie power meter lan (determined by trial)
+        self.rw([wrReg00, 0b1, 0b0, 0b1])
+        self.rw([wrReg01, 0xFF, 0xB5, 0x62])
+        self.rw([wrReg02, 0x54, 0xFE, 0xFF])
+        self.rw([wrReg03, 0x15, 0x8C, 0x71])
+        self.rw([wrReg04, 0x3D, 0xE0, 0xEF])
+        self.rw([wrReg13, 0x83, 0x12, 0x6E])
+        self.rw([wrReg14, 0xFF, 0xCF, 0xC3])
+        self.rw([wrReg16, 0x00, 0x01, 0x4A])
+        self.rw([wrReg17, 0x00, 0x44, 0xCA])
+        # Perform continuous computation cycles
+    	self.rw(self.compu)
+    	time.sleep(2) # wait until values becomes good
 
     def readregister(self, register):
         if register > 31 or register < 0: #just check range
     	    return -1
         self.Sync()
-        if self.inverted:
-    	    ret = self.spi.xfer2([(register << 1) ^ 255] + [self.sync0 ^ 255]*3)
-    	    inv = []
-    	    for value in ret:
-        	inv.append(value ^ 255)
-    	    return inv[1]*256*256 + inv[2]*256 + inv[3]
-        else:
-    	    ret = self.spi.xfer2([register << 1] + [self.sync0]*3)
-    	    return ret[1]*256*256 + ret[2]*256 + ret[3]
+    	received = self.rw(register << 1)
+    	return received[1]*256*256 + received[2]*256 + received[3]
 
     def getregister(self, register):
-        Expotential=[  0, -23, -22, -23, -22, -0, -5, -23, -23, -23, # 0:9
-                     -23, -24, -24, -23, -23, 0, -24, -24, -5, -16,  # 10:19
-                    0, 0, -22, -23, 0, 0, 0, 0, 0, 0, 0, 0 ]	     # 20:31
-        Binary = [0, 15, 26, 28]				     # binary registers
-        twosComplement =  [1, 7, 8, 9, 10, 14, 19, 23]		     # two's complement registers
+        Expotential=    [  0, -23, -22, -23, -22, -0, -5, -23, -23, -23, # 0:9 decimal point position
+                        -23, -24, -24, -23, -23, 0, -24, -24, -5, -16,   # 10:19
+                        0, 0, -22, -23, 0, 0, 0, 0, 0, 0, 0, 0 ]	 # 20:31
+        Binary =        [0, 15, 26, 28]				         # binary registers
+        twosComplement =[1, 7, 8, 9, 10, 14, 19, 23]		         # two's complement registers
 
         if register > 31 or register < 0: # just check range
     	    return -1
         value = self.readregister(register)
         if register in Binary:
             return  bin(value)
-        elif register in twosComplement:  # convert to host two's complement
+        elif register in twosComplement:
             if value > 2**23:
-                value = ((value ^ 0xFFFFFF) + 1) * -1
+                value = ((value ^ 0xFFFFFF) + 1) * -1 # convert to host two's complement system
         return value * 2**Expotential[register]
 
 def main():
@@ -128,7 +112,7 @@ def main():
     Igain = 10
     Egain = 4000
     device  = cs5461()
-#    for i in range(0,32):
+#    for i in range(32):
 #	print i, device.getregister(i)
     while True:
         Irms = device.getregister(11)
