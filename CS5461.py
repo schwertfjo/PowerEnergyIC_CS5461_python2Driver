@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import RPi.GPIO as GPIO
@@ -20,9 +20,8 @@ class cs5461:
 
     def __init__(self, mode = default_mode, speed = default_speed, inverted = default_inverted):
         self.spi = spidev.SpiDev()
-        self.spi.open(0,0)
-        self.spi.mode = mode
-        self.spi.max_speed_hz = speed
+        self.spi_mode = mode
+        self.spi_speed = speed
         self.inverted = inverted
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
@@ -31,16 +30,21 @@ class cs5461:
 
     def rw(self, bytes):
         send_bytes = []
-	if type(bytes) is int:
+        ret = -1
+        if type(bytes) is int:
             send_bytes = [bytes] + [self.sync0] * 3
         elif type(bytes) is list:
             send_bytes = bytes + [self.sync0] * (4 - len(bytes))
+        self.spi.open(0,0)
+        self.spi.mode = self.spi_mode
+        self.spi.max_speed_hz = self.spi_speed
         if self.inverted:
             r = self.spi.xfer2( map(lambda x: x ^ 0xFF, send_bytes) )
-            return map(lambda x: x ^ 0xFF, r)
+            ret = map(lambda x: x ^ 0xFF, r)
         else:
-            r = self.spi.xfer2( send_bytes )
-            return r
+            ret = self.spi.xfer2( send_bytes )
+        self.spi.close()
+        return ret
 
     def close(self):
         self.spi.close()
