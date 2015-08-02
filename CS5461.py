@@ -46,9 +46,6 @@ class cs5461:
         self.spi.close()
         return ret
 
-    def close(self):
-        self.spi.close()
-
     def Reset(self):
         self.rw(self.reset)
 
